@@ -1,4 +1,10 @@
 /**
+ * API Configuration
+ * Set API_BASE_URL to your Workers backend URL for Cloudflare deployment
+ */
+const API_BASE_URL = window.API_BASE_URL || '';  // Empty string means same origin
+
+/**
  * Call a JSON-in JSON-out API endpoint
  * Data is automatically serialized
  * @param {string} endpoint - The API endpoint to call
@@ -11,7 +17,7 @@ export async function callJsonApi(endpoint, data) {
     headers: {
       "Content-Type": "application/json",
     },
-    credentials: "same-origin",
+    credentials: API_BASE_URL ? "omit" : "same-origin",
     body: JSON.stringify(data),
   });
 
@@ -44,8 +50,11 @@ export async function fetchApi(url, request) {
     // add the CSRF token to the headers
     finalRequest.headers["X-CSRF-Token"] = token;
 
+    // Build full URL with base
+    const fullUrl = API_BASE_URL ? `${API_BASE_URL}${url}` : url;
+
     // perform the fetch with the updated request
-    const response = await fetch(url, finalRequest);
+    const response = await fetch(fullUrl, finalRequest);
 
     // check if there was an CSRF error
     if (response.status === 403 && retry) {
@@ -79,9 +88,12 @@ let csrfToken = null;
  */
 async function getCsrfToken() {
   if (csrfToken) return csrfToken;
-  const response = await fetch("/csrf_token", {
-    credentials: "same-origin",
+  
+  const csrfUrl = API_BASE_URL ? `${API_BASE_URL}/csrf_token` : "/csrf_token";
+  const response = await fetch(csrfUrl, {
+    credentials: API_BASE_URL ? "omit" : "same-origin",
   });
+  
   if (response.redirected && response.url.endsWith("/login")) {
     // redirect to login
     window.location.href = response.url;

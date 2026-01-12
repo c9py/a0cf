@@ -28,6 +28,10 @@
         globalThis.safeCall = function (name, ...args) {
             if (window[name]) window[name](...args)
         }
+        
+        // API Configuration for Cloudflare deployment
+        // Set this to your Workers backend URL
+        window.API_BASE_URL = 'https://a0cf-api.d-d1f.workers.dev';
     </script>
 
     <script type="module" src="index.js"></script>
@@ -61,7 +65,7 @@
 
     <script>
         // Expose git info for sidebar component
-        globalThis.gitinfo = { version: "{{version_no}}", commit_time: "{{version_time}}" };
+        globalThis.gitinfo = { version: "1.0.0-cf", commit_time: "2026-01-12" };
     </script>
 </head>
 
