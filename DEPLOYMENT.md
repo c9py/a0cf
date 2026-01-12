@@ -6,17 +6,30 @@ This document describes the deployment of Agent Zero to Cloudflare infrastructur
 
 | Component | URL | Status |
 |-----------|-----|--------|
-| Frontend (Pages) | https://a0cf.pages.dev | Live |
-| Backend (Workers) | https://a0cf-api.d-d1f.workers.dev | Live |
-| GitHub Repository | https://github.com/c9py/a0cf | Active |
+| **Frontend (Pages)** | https://a0cf.pages.dev | ✅ Live |
+| **Frontend (Latest)** | https://8d0ace47.a0cf.pages.dev | ✅ Live |
+| **Backend (Workers)** | https://a0cf-api.d-d1f.workers.dev | ✅ Live |
+| **GitHub Repository** | https://github.com/c9py/a0cf | ✅ Synced |
 
 ## Architecture Overview
 
-The deployment consists of two main components that work together to provide a fully functional AI chat interface.
+```
+┌─────────────────────┐     ┌─────────────────────┐
+│  Cloudflare Pages   │────▶│  Cloudflare Workers │
+│    (Frontend UI)    │     │   (Backend API)     │
+│  a0cf.pages.dev     │     │ a0cf-api.workers.dev│
+└─────────────────────┘     └─────────────────────┘
+                                      │
+                                      ▼
+                            ┌─────────────────────┐
+                            │   OpenRouter API    │
+                            │  (AI Responses)     │
+                            └─────────────────────┘
+```
 
 ### Frontend (Cloudflare Pages)
 
-The frontend is a static web application deployed to Cloudflare Pages. It includes the complete Agent Zero UI with features such as chat interface, sidebar navigation, dark mode, and various agent controls. The frontend communicates with the backend API via REST endpoints.
+The frontend is a static web application deployed to Cloudflare Pages. It includes the complete Agent Zero UI with features such as chat interface, sidebar navigation, dark mode, and various agent controls.
 
 **Key Files:**
 - `webui/` - Static HTML, CSS, and JavaScript files
@@ -30,43 +43,54 @@ The backend is a JavaScript-based API server running on Cloudflare Workers. It h
 - `workers/src/index.js` - Main Worker script with all API endpoints
 - `workers/wrangler.toml` - Cloudflare Worker configuration
 
-## API Endpoints
+## Working Features
 
-The Workers backend provides the following API endpoints:
+### ✅ Fully Functional
+- **Chat Interface**: Create new chats, send messages, receive AI responses
+- **AI Responses**: Powered by OpenRouter API (gpt-4.1-mini model)
+- **Settings Modal**: Full configuration panel with all options
+- **Memory Dashboard**: Opens correctly (shows informative message about Workers limitations)
+- **Task Scheduler**: Opens correctly (shows informative message about Workers limitations)
+- **Sidebar Navigation**: All navigation elements work
+- **Dark Mode**: Theme toggle works
+- **Responsive UI**: Full Agent Zero interface
+
+### ⚠️ Limited Functionality (Workers Constraints)
+- **Memory Storage**: Not persistent (Cloudflare Workers are stateless)
+- **Task Scheduling**: Not available (requires persistent backend)
+- **File Operations**: Limited (no persistent filesystem)
+- **Knowledge Import**: Limited (no persistent storage)
+
+## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | API information and status |
 | `/health` | GET | Health check |
 | `/csrf_token` | GET | CSRF token generation |
 | `/settings_get` | POST | Get application settings |
 | `/settings_set` | POST | Update application settings |
 | `/poll` | POST | Poll for updates (contexts, logs) |
-| `/message` | POST | Send message and get AI response |
+| `/message_async` | POST | Send message and get AI response |
 | `/chat_create` | POST | Create new chat context |
 | `/chat_load` | POST | Load existing chat |
 | `/chat_reset` | POST | Reset chat history |
-| `/chat_remove` | POST | Delete chat |
-| `/chat_export` | POST | Export chat data |
+| `/memory_dashboard` | POST | Memory dashboard operations |
+| `/tasks_get` | POST | Get scheduled tasks |
 
 ## Configuration
 
-### Environment Variables
-
-The Worker uses the following environment variables (configured as secrets):
+### Environment Variables (Secrets)
 
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `OPENROUTER_API_KEY` | OpenRouter API key for AI responses | Yes (preferred) |
 | `OPENAI_API_KEY` | OpenAI API key (fallback) | Optional |
-| `CHAT_MODEL_NAME` | Model name override | Optional |
 
 ### Setting Secrets
 
-To configure the API keys, use the Wrangler CLI:
-
 ```bash
 # Set OpenRouter API key (recommended)
+cd workers
 wrangler secret put OPENROUTER_API_KEY
 
 # Or set OpenAI API key
@@ -79,6 +103,7 @@ wrangler secret put OPENAI_API_KEY
 
 ```bash
 cd workers
+npm install
 wrangler deploy
 ```
 
@@ -88,52 +113,39 @@ wrangler deploy
 wrangler pages deploy webui --project-name=a0cf
 ```
 
-## Features
+## Fixes Applied (v1.0.1)
 
-The deployment supports the following features:
-
-**Working Features:**
-- Chat creation and management
-- AI-powered responses via OpenRouter/OpenAI
-- Conversation context and history
-- Dark mode UI
-- Real-time polling for updates
-- Settings management
-- CSRF protection
-
-**Limitations:**
-- File operations require external storage integration
-- Memory/knowledge features need additional backend implementation
-- Speech synthesis/transcription requires additional API integration
-
-## Development
-
-### Local Testing
-
-```bash
-cd workers
-wrangler dev
-```
-
-### Viewing Logs
-
-```bash
-wrangler tail
-```
+1. **URL Construction Bug**: Fixed missing `/` between base URL and endpoint in `api.js`
+2. **API Module Loading**: Changed `API_BASE_URL` from constant to getter function for late initialization
+3. **Memory Dashboard Endpoint**: Added with informative message about Workers limitations
+4. **Task Scheduler Endpoint**: Added with informative message about Workers limitations
+5. **CORS Headers**: Properly configured for cross-origin requests
 
 ## Troubleshooting
 
-**Issue: AI responses show "Error calling AI: 401"**
+**Issue: Settings shows "Failed to fetch"**
+- Clear browser cache or use incognito mode
+- Ensure you're using the latest deployment URL
+- Check that Workers backend is responding at `/settings_get`
+
+**Issue: AI responses show "Error calling AI"**
 - Verify the API key is correctly set as a secret
 - Check that the API key is valid and has sufficient credits
 
-**Issue: Frontend shows "Connection Error"**
-- Ensure the Workers backend is deployed and running
-- Check browser console for CORS errors
-- Verify API_BASE_URL is correctly configured in the frontend
+**Issue: Memory Dashboard shows "Failed to search memories"**
+- This is expected if using an older deployment
+- Update to the latest version which shows an informative message instead
 
-## Version History
+## Future Enhancements
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0.0-cf | 2026-01-12 | Initial Cloudflare deployment with OpenRouter API support |
+To enable full Agent Zero functionality, consider:
+
+1. **Cloudflare D1**: For persistent chat history and settings
+2. **Cloudflare KV**: For session storage and caching
+3. **Cloudflare R2**: For file storage and knowledge base
+4. **Durable Objects**: For real-time collaboration and task scheduling
+
+---
+
+*Deployed on: 2026-01-12*
+*Version: 1.0.1-cf*
