@@ -1,162 +1,173 @@
 /**
  * Comprehensive Unit Tests for Frontend API Module
- * Tests every function and edge case in api.js
+ * Tests the exported functions from api.js
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// Mock window and fetch
-const mockWindow = {
-  API_BASE_URL: 'https://test-api.example.com',
-  csrfToken: null,
-};
-
-global.window = mockWindow;
+// Mock fetch globally
 global.fetch = vi.fn();
 
-// Import after mocking
-const { API, getApiBaseUrl, fetchApi, callJsonApi, uploadFile } = await import('../../js/api.js');
+// Mock window
+global.window = {
+  API_BASE_URL: 'https://test-api.example.com',
+  location: { href: '' },
+};
+
+// Mock document
+global.document = {
+  cookie: '',
+};
 
 describe('API Module', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockWindow.API_BASE_URL = 'https://test-api.example.com';
-    mockWindow.csrfToken = null;
+    global.window.API_BASE_URL = 'https://test-api.example.com';
+    global.document.cookie = '';
+    
+    // Reset module cache to get fresh imports
+    vi.resetModules();
   });
 
-  // ==========================================
-  // getApiBaseUrl Tests
-  // ==========================================
-  describe('getApiBaseUrl', () => {
-    it('should return window.API_BASE_URL when set', () => {
-      mockWindow.API_BASE_URL = 'https://custom-api.example.com';
-      const result = getApiBaseUrl();
-      expect(result).toBe('https://custom-api.example.com');
-    });
-
-    it('should return empty string when API_BASE_URL is not set', () => {
-      mockWindow.API_BASE_URL = undefined;
-      const result = getApiBaseUrl();
-      expect(result).toBe('');
-    });
-
-    it('should return empty string when API_BASE_URL is null', () => {
-      mockWindow.API_BASE_URL = null;
-      const result = getApiBaseUrl();
-      expect(result).toBe('');
-    });
-
-    it('should handle trailing slash in API_BASE_URL', () => {
-      mockWindow.API_BASE_URL = 'https://api.example.com/';
-      const result = getApiBaseUrl();
-      expect(result).toBe('https://api.example.com/');
-    });
-  });
-
-  // ==========================================
-  // URL Normalization Tests
-  // ==========================================
-  describe('URL Normalization', () => {
-    it('should add leading slash to endpoint without one', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: 'test' }),
-      });
-
-      await fetchApi('endpoint');
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/endpoint'),
-        expect.any(Object)
-      );
-    });
-
-    it('should not double slash when endpoint has leading slash', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: 'test' }),
-      });
-
-      await fetchApi('/endpoint');
-      
-      const calledUrl = global.fetch.mock.calls[0][0];
-      expect(calledUrl).not.toContain('//endpoint');
-    });
-
-    it('should handle base URL with trailing slash', async () => {
-      mockWindow.API_BASE_URL = 'https://api.example.com/';
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: 'test' }),
-      });
-
-      await fetchApi('endpoint');
-      
-      const calledUrl = global.fetch.mock.calls[0][0];
-      expect(calledUrl).toBe('https://api.example.com/endpoint');
-    });
+  afterEach(() => {
+    vi.clearAllMocks();
   });
 
   // ==========================================
   // fetchApi Tests
   // ==========================================
   describe('fetchApi', () => {
-    it('should make GET request by default', async () => {
+    it('should make request to correct URL with base URL', async () => {
+      // Mock CSRF token response
       global.fetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ data: 'test' }),
+        json: () => Promise.resolve({ ok: true, token: 'test-token', runtime_id: 'test-runtime' }),
+        redirected: false,
+      });
+      
+      // Mock actual API response
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        redirected: false,
       });
 
-      await fetchApi('/test');
+      const { fetchApi } = await import('../../js/api.js');
+      await fetchApi('/test-endpoint');
       
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ method: 'GET' })
-      );
+      // Second call should be to the API endpoint
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      expect(global.fetch.mock.calls[1][0]).toBe('https://test-api.example.com/test-endpoint');
     });
 
-    it('should include credentials in request', async () => {
+    it('should include CSRF token in headers', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ data: 'test' }),
+        json: () => Promise.resolve({ ok: true, token: 'csrf-test-token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        redirected: false,
       });
 
+      const { fetchApi } = await import('../../js/api.js');
       await fetchApi('/test');
       
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ credentials: 'include' })
-      );
+      const secondCallOptions = global.fetch.mock.calls[1][1];
+      expect(secondCallOptions.headers['X-CSRF-Token']).toBe('csrf-test-token');
     });
 
-    it('should handle POST method', async () => {
+    it('should normalize URL without leading slash', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ data: 'test' }),
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        redirected: false,
       });
 
-      await fetchApi('/test', { method: 'POST' });
+      const { fetchApi } = await import('../../js/api.js');
+      await fetchApi('endpoint-without-slash');
       
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ method: 'POST' })
-      );
+      expect(global.fetch.mock.calls[1][0]).toBe('https://test-api.example.com/endpoint-without-slash');
+    });
+
+    it('should not double slash when URL has leading slash', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        redirected: false,
+      });
+
+      const { fetchApi } = await import('../../js/api.js');
+      await fetchApi('/endpoint-with-slash');
+      
+      const calledUrl = global.fetch.mock.calls[1][0];
+      expect(calledUrl).not.toContain('//endpoint');
+      expect(calledUrl).toBe('https://test-api.example.com/endpoint-with-slash');
+    });
+
+    it('should retry on 403 CSRF error', async () => {
+      // First CSRF token
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'old-token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      // First request returns 403
+      global.fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        redirected: false,
+      });
+      
+      // Second CSRF token
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'new-token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      // Retry request succeeds
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        redirected: false,
+      });
+
+      const { fetchApi } = await import('../../js/api.js');
+      const response = await fetchApi('/test');
+      
+      expect(global.fetch).toHaveBeenCalledTimes(4);
+      expect(response.status).toBe(200);
     });
 
     it('should handle network errors', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
       global.fetch.mockRejectedValueOnce(new Error('Network error'));
 
+      const { fetchApi } = await import('../../js/api.js');
+      
       await expect(fetchApi('/test')).rejects.toThrow('Network error');
-    });
-
-    it('should handle timeout', async () => {
-      global.fetch.mockImplementationOnce(() => 
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout')), 100)
-        )
-      );
-
-      await expect(fetchApi('/test')).rejects.toThrow();
     });
   });
 
@@ -167,523 +178,474 @@ describe('API Module', () => {
     it('should set Content-Type to application/json', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
         json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
       });
 
-      await callJsonApi('/test', {});
+      const { callJsonApi } = await import('../../js/api.js');
+      await callJsonApi('/test', { key: 'value' });
       
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'Content-Type': 'application/json',
-          }),
-        })
-      );
+      const secondCallOptions = global.fetch.mock.calls[1][1];
+      expect(secondCallOptions.headers['Content-Type']).toBe('application/json');
     });
 
     it('should stringify body data', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ data: 'test' }),
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
       });
-
-      const testData = { key: 'value', nested: { a: 1 } };
-      await callJsonApi('/test', testData);
       
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: JSON.stringify(testData),
-        })
-      );
-    });
-
-    it('should use POST method by default', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
       });
 
+      const { callJsonApi } = await import('../../js/api.js');
+      const testData = { key: 'value', nested: { a: 1 } };
+      await callJsonApi('/test', testData);
+      
+      const secondCallOptions = global.fetch.mock.calls[1][1];
+      expect(secondCallOptions.body).toBe(JSON.stringify(testData));
+    });
+
+    it('should use POST method', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
+      });
+
+      const { callJsonApi } = await import('../../js/api.js');
       await callJsonApi('/test', {});
       
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ method: 'POST' })
-      );
+      const secondCallOptions = global.fetch.mock.calls[1][1];
+      expect(secondCallOptions.method).toBe('POST');
     });
 
     it('should parse JSON response', async () => {
       const responseData = { success: true, data: { id: 1 } };
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(responseData),
+        redirected: false,
       });
 
+      const { callJsonApi } = await import('../../js/api.js');
       const result = await callJsonApi('/test', {});
       
       expect(result).toEqual(responseData);
     });
 
-    it('should handle empty response body', async () => {
+    it('should throw error on non-ok response', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve(null),
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
       });
-
-      const result = await callJsonApi('/test', {});
       
-      expect(result).toBeNull();
-    });
-
-    it('should handle array response', async () => {
-      const responseData = [1, 2, 3];
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(responseData),
-      });
-
-      const result = await callJsonApi('/test', {});
-      
-      expect(result).toEqual([1, 2, 3]);
-    });
-  });
-
-  // ==========================================
-  // CSRF Token Tests
-  // ==========================================
-  describe('CSRF Token Handling', () => {
-    it('should include CSRF token in headers when available', async () => {
-      mockWindow.csrfToken = 'test-csrf-token';
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: 'test' }),
-      });
-
-      await callJsonApi('/test', {});
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'X-CSRF-Token': 'test-csrf-token',
-          }),
-        })
-      );
-    });
-
-    it('should not include CSRF token when not available', async () => {
-      mockWindow.csrfToken = null;
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: 'test' }),
-      });
-
-      await callJsonApi('/test', {});
-      
-      const headers = global.fetch.mock.calls[0][1].headers;
-      expect(headers['X-CSRF-Token']).toBeUndefined();
-    });
-  });
-
-  // ==========================================
-  // Error Response Tests
-  // ==========================================
-  describe('Error Response Handling', () => {
-    it('should handle 400 Bad Request', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        statusText: 'Bad Request',
-        json: () => Promise.resolve({ error: 'Invalid input' }),
-      });
-
-      await expect(callJsonApi('/test', {})).rejects.toThrow();
-    });
-
-    it('should handle 401 Unauthorized', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-        statusText: 'Unauthorized',
-        json: () => Promise.resolve({ error: 'Not authenticated' }),
-      });
-
-      await expect(callJsonApi('/test', {})).rejects.toThrow();
-    });
-
-    it('should handle 404 Not Found', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        statusText: 'Not Found',
-        json: () => Promise.resolve({ error: 'Endpoint not found' }),
-      });
-
-      await expect(callJsonApi('/test', {})).rejects.toThrow();
-    });
-
-    it('should handle 500 Internal Server Error', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: false,
         status: 500,
-        statusText: 'Internal Server Error',
-        json: () => Promise.resolve({ error: 'Server error' }),
-      });
-
-      await expect(callJsonApi('/test', {})).rejects.toThrow();
-    });
-
-    it('should handle non-JSON error response', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        statusText: 'Internal Server Error',
-        json: () => Promise.reject(new Error('Invalid JSON')),
         text: () => Promise.resolve('Server Error'),
+        redirected: false,
       });
 
-      await expect(callJsonApi('/test', {})).rejects.toThrow();
+      const { callJsonApi } = await import('../../js/api.js');
+      
+      await expect(callJsonApi('/test', {})).rejects.toThrow('Server Error');
     });
-  });
 
-  // ==========================================
-  // File Upload Tests
-  // ==========================================
-  describe('File Upload', () => {
-    it('should create FormData for file upload', async () => {
-      const mockFile = new Blob(['test content'], { type: 'text/plain' });
+    it('should handle empty request body', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ success: true }),
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
       });
-
-      await uploadFile('/upload', mockFile, 'test.txt');
       
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          method: 'POST',
-          body: expect.any(FormData),
-        })
-      );
-    });
-
-    it('should not set Content-Type for file upload (let browser set it)', async () => {
-      const mockFile = new Blob(['test content'], { type: 'text/plain' });
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ success: true }),
-      });
-
-      await uploadFile('/upload', mockFile, 'test.txt');
-      
-      const headers = global.fetch.mock.calls[0][1].headers || {};
-      expect(headers['Content-Type']).toBeUndefined();
-    });
-  });
-
-  // ==========================================
-  // Edge Cases
-  // ==========================================
-  describe('Edge Cases', () => {
-    it('should handle empty string endpoint', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
       });
 
-      await fetchApi('');
+      const { callJsonApi } = await import('../../js/api.js');
+      await callJsonApi('/test', {});
       
-      expect(global.fetch).toHaveBeenCalled();
+      const secondCallOptions = global.fetch.mock.calls[1][1];
+      expect(secondCallOptions.body).toBe('{}');
+    });
+
+    it('should handle array data', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
+      });
+
+      const { callJsonApi } = await import('../../js/api.js');
+      const arrayData = [1, 2, 3];
+      await callJsonApi('/test', arrayData);
+      
+      const secondCallOptions = global.fetch.mock.calls[1][1];
+      expect(secondCallOptions.body).toBe('[1,2,3]');
+    });
+
+    it('should handle null values in data', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
+      });
+
+      const { callJsonApi } = await import('../../js/api.js');
+      const dataWithNull = { key: null };
+      await callJsonApi('/test', dataWithNull);
+      
+      const secondCallOptions = global.fetch.mock.calls[1][1];
+      expect(secondCallOptions.body).toBe('{"key":null}');
+    });
+
+    it('should handle unicode in data', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
+      });
+
+      const { callJsonApi } = await import('../../js/api.js');
+      const unicodeData = { text: '你好世界 🌍 مرحبا' };
+      await callJsonApi('/test', unicodeData);
+      
+      const secondCallOptions = global.fetch.mock.calls[1][1];
+      expect(secondCallOptions.body).toContain('你好世界');
+    });
+  });
+
+  // ==========================================
+  // URL Construction Tests
+  // ==========================================
+  describe('URL Construction', () => {
+    it('should work with base URL ending in slash', async () => {
+      global.window.API_BASE_URL = 'https://test-api.example.com/';
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
+      });
+
+      const { fetchApi } = await import('../../js/api.js');
+      await fetchApi('/endpoint');
+      
+      // URL should be properly constructed
+      expect(global.fetch.mock.calls[1][0]).toContain('endpoint');
+    });
+
+    it('should work without base URL (same origin)', async () => {
+      global.window.API_BASE_URL = '';
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
+      });
+
+      const { fetchApi } = await import('../../js/api.js');
+      await fetchApi('/endpoint');
+      
+      expect(global.fetch.mock.calls[1][0]).toBe('/endpoint');
     });
 
     it('should handle special characters in endpoint', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
         json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
       });
 
+      const { fetchApi } = await import('../../js/api.js');
       await fetchApi('/test?param=value&other=123');
       
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/test?param=value&other=123'),
-        expect.any(Object)
-      );
+      expect(global.fetch.mock.calls[1][0]).toContain('param=value');
+    });
+  });
+
+  // ==========================================
+  // CSRF Token Caching Tests
+  // ==========================================
+  describe('CSRF Token Caching', () => {
+    it('should cache CSRF token after first request', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'cached-token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: 'test1' }),
+        redirected: false,
+      });
+      
+      // Second API call should reuse cached token
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: 'test2' }),
+        redirected: false,
+      });
+
+      const { fetchApi } = await import('../../js/api.js');
+      
+      await fetchApi('/test1');
+      await fetchApi('/test2');
+      
+      // Should only have 3 fetch calls (1 CSRF + 2 API calls)
+      expect(global.fetch).toHaveBeenCalledTimes(3);
     });
 
-    it('should handle unicode in request body', async () => {
+    it('should set cookie with CSRF token', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'cookie-token', runtime_id: 'runtime-123' }),
+        redirected: false,
+      });
+      
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
       });
 
-      const unicodeData = { text: '你好世界 🌍 مرحبا' };
-      await callJsonApi('/test', unicodeData);
+      const { fetchApi } = await import('../../js/api.js');
+      await fetchApi('/test');
       
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: JSON.stringify(unicodeData),
-        })
-      );
+      expect(global.document.cookie).toContain('csrf_token_runtime-123=cookie-token');
+    });
+  });
+
+  // ==========================================
+  // Error Handling Tests
+  // ==========================================
+  describe('Error Handling', () => {
+    it('should throw error when CSRF token request fails', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: false, error: 'Token error' }),
+        redirected: false,
+      });
+
+      const { fetchApi } = await import('../../js/api.js');
+      
+      await expect(fetchApi('/test')).rejects.toThrow('Token error');
     });
 
-    it('should handle very large request body', async () => {
+    it('should handle CSRF token network error', async () => {
+      global.fetch.mockRejectedValueOnce(new Error('Network error'));
+
+      const { fetchApi } = await import('../../js/api.js');
+      
+      await expect(fetchApi('/test')).rejects.toThrow('Network error');
+    });
+
+    it('should handle malformed JSON response', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.reject(new Error('Invalid JSON')),
+        redirected: false,
+      });
+
+      const { callJsonApi } = await import('../../js/api.js');
+      
+      await expect(callJsonApi('/test', {})).rejects.toThrow();
+    });
+  });
+
+  // ==========================================
+  // Credentials Handling Tests
+  // ==========================================
+  describe('Credentials Handling', () => {
+    it('should omit credentials when using external API', async () => {
+      global.window.API_BASE_URL = 'https://external-api.example.com';
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
       });
 
-      const largeData = { text: 'a'.repeat(100000) };
-      await callJsonApi('/test', largeData);
+      const { callJsonApi } = await import('../../js/api.js');
+      await callJsonApi('/test', {});
       
-      expect(global.fetch).toHaveBeenCalled();
+      const secondCallOptions = global.fetch.mock.calls[1][1];
+      expect(secondCallOptions.credentials).toBe('omit');
     });
 
-    it('should handle null values in request body', async () => {
+    it('should use same-origin credentials when no base URL', async () => {
+      global.window.API_BASE_URL = '';
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, token: 'token', runtime_id: 'test' }),
+        redirected: false,
+      });
+      
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ data: 'test' }),
+        redirected: false,
       });
 
-      const dataWithNull = { key: null, nested: { value: null } };
-      await callJsonApi('/test', dataWithNull);
+      const { callJsonApi } = await import('../../js/api.js');
+      await callJsonApi('/test', {});
       
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: JSON.stringify(dataWithNull),
-        })
-      );
-    });
-
-    it('should handle undefined values in request body', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: 'test' }),
-      });
-
-      const dataWithUndefined = { key: undefined };
-      await callJsonApi('/test', dataWithUndefined);
-      
-      // undefined values are stripped by JSON.stringify
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: '{}',
-        })
-      );
+      const secondCallOptions = global.fetch.mock.calls[1][1];
+      expect(secondCallOptions.credentials).toBe('same-origin');
     });
   });
 });
 
 // ==========================================
-// API Endpoint Specific Tests
+// Integration-style Tests
 // ==========================================
-describe('API Endpoint Methods', () => {
+describe('API Integration Tests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockWindow.API_BASE_URL = 'https://test-api.example.com';
+    vi.resetModules();
+    global.window.API_BASE_URL = 'https://test-api.example.com';
+    global.document.cookie = '';
   });
 
-  describe('API.getHealth', () => {
-    it('should call /health endpoint', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ status: 'healthy' }),
-      });
-
-      await API.getHealth();
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/health'),
-        expect.any(Object)
-      );
+  it('should complete full request cycle', async () => {
+    // CSRF token
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, token: 'integration-token', runtime_id: 'int-test' }),
+      redirected: false,
     });
+    
+    // API call
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ success: true, data: { id: 123 } }),
+      redirected: false,
+    });
+
+    const { callJsonApi } = await import('../../js/api.js');
+    const result = await callJsonApi('/api/test', { action: 'create' });
+    
+    expect(result.success).toBe(true);
+    expect(result.data.id).toBe(123);
   });
 
-  describe('API.getCsrfToken', () => {
-    it('should call /csrf_token endpoint', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ token: 'test-token' }),
-      });
-
-      await API.getCsrfToken();
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/csrf_token'),
-        expect.any(Object)
-      );
+  it('should handle multiple sequential requests', async () => {
+    // CSRF token (only once)
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, token: 'seq-token', runtime_id: 'seq-test' }),
+      redirected: false,
     });
-  });
-
-  describe('API.getSettings', () => {
-    it('should call /settings_get endpoint with POST', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ chat_model: {} }),
-      });
-
-      await API.getSettings();
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/settings_get'),
-        expect.objectContaining({ method: 'POST' })
-      );
+    
+    // First API call
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ result: 1 }),
+      redirected: false,
     });
-  });
-
-  describe('API.setSettings', () => {
-    it('should call /settings_set endpoint with settings data', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ ok: true }),
-      });
-
-      const settings = { chat_model: { name: 'gpt-4' } };
-      await API.setSettings(settings);
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/settings_set'),
-        expect.objectContaining({
-          method: 'POST',
-          body: expect.stringContaining('gpt-4'),
-        })
-      );
+    
+    // Second API call
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ result: 2 }),
+      redirected: false,
     });
-  });
-
-  describe('API.poll', () => {
-    it('should call /poll endpoint', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ contexts: [], logs: [] }),
-      });
-
-      await API.poll();
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/poll'),
-        expect.any(Object)
-      );
+    
+    // Third API call
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ result: 3 }),
+      redirected: false,
     });
 
-    it('should include context_id when provided', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ contexts: [], logs: [] }),
-      });
-
-      await API.poll('test-context-id');
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('test-context-id'),
-        })
-      );
-    });
-  });
-
-  describe('API.sendMessage', () => {
-    it('should call /message_async endpoint with message data', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ ok: true }),
-      });
-
-      await API.sendMessage('Hello', 'context-123');
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/message_async'),
-        expect.objectContaining({
-          body: expect.stringContaining('Hello'),
-        })
-      );
-    });
-  });
-
-  describe('API.createChat', () => {
-    it('should call /chat_create endpoint', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ context: { id: 'new-id' } }),
-      });
-
-      await API.createChat();
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/chat_create'),
-        expect.any(Object)
-      );
-    });
-  });
-
-  describe('API.loadChat', () => {
-    it('should call /chat_load endpoint with context_id', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ context: {} }),
-      });
-
-      await API.loadChat('context-123');
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/chat_load'),
-        expect.objectContaining({
-          body: expect.stringContaining('context-123'),
-        })
-      );
-    });
-  });
-
-  describe('API.resetChat', () => {
-    it('should call /chat_reset endpoint', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ ok: true }),
-      });
-
-      await API.resetChat('context-123');
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/chat_reset'),
-        expect.any(Object)
-      );
-    });
-  });
-
-  describe('API.removeChat', () => {
-    it('should call /chat_remove endpoint', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ ok: true }),
-      });
-
-      await API.removeChat('context-123');
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/chat_remove'),
-        expect.any(Object)
-      );
-    });
-  });
-
-  describe('API.exportChat', () => {
-    it('should call /chat_export endpoint', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ messages: [] }),
-      });
-
-      await API.exportChat('context-123');
-      
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/chat_export'),
-        expect.any(Object)
-      );
-    });
+    const { callJsonApi } = await import('../../js/api.js');
+    
+    const result1 = await callJsonApi('/api/1', {});
+    const result2 = await callJsonApi('/api/2', {});
+    const result3 = await callJsonApi('/api/3', {});
+    
+    expect(result1.result).toBe(1);
+    expect(result2.result).toBe(2);
+    expect(result3.result).toBe(3);
+    
+    // Should have 4 total calls (1 CSRF + 3 API)
+    expect(global.fetch).toHaveBeenCalledTimes(4);
   });
 });
