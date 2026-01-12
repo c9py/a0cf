@@ -1,0 +1,11 @@
+# Cloudflare Pages configuration
+name = "a0cf"
+compatibility_date = "2024-01-01"
+
+# Disable automatic HTML extension handling
+[build]
+command = ""
+
+# Disable HTML extension stripping
+[site]
+bucket = "./"

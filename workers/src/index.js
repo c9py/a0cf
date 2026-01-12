@@ -76,6 +76,13 @@ const routes = {
   // MCP & A2A
   '/mcp': handleMcp,
   '/a2a': handleA2a,
+  
+  // Memory Dashboard
+  '/memory_dashboard': handleMemoryDashboard,
+  
+  // Tasks
+  '/tasks_get': handleTasksGet,
+  '/task_kill': handleTaskKill,
 };
 
 // State class to manage in-memory data
@@ -689,6 +696,64 @@ async function getJsonBody(request) {
   } catch (e) {
     return {};
   }
+}
+
+// Memory Dashboard
+async function handleMemoryDashboard(request, env) {
+  const body = await getJsonBody(request);
+  const action = body.action || 'search';
+  
+  if (action === 'get_memory_subdirs') {
+    return jsonResponse({
+      success: true,
+      subdirs: ['default']
+    });
+  }
+  
+  if (action === 'get_current_memory_subdir') {
+    return jsonResponse({
+      success: true,
+      memory_subdir: 'default'
+    });
+  }
+  
+  if (action === 'search') {
+    // Return empty results for now - memory is not persisted in Workers
+    return jsonResponse({
+      success: true,
+      memories: [],
+      total_count: 0,
+      total_db_count: 0,
+      knowledge_count: 0,
+      conversation_count: 0,
+      search_query: body.search || '',
+      area_filter: body.area || '',
+      memory_subdir: body.memory_subdir || 'default',
+      message: 'Memory storage is not available in Cloudflare Workers deployment. Use a persistent backend for memory features.'
+    });
+  }
+  
+  return jsonResponse({
+    success: false,
+    error: `Action '${action}' is not supported in Workers deployment`,
+    memories: [],
+    total_count: 0
+  });
+}
+
+// Tasks
+async function handleTasksGet(request, env) {
+  return jsonResponse({
+    tasks: [],
+    message: 'Task scheduling is not available in Cloudflare Workers deployment'
+  });
+}
+
+async function handleTaskKill(request, env) {
+  return jsonResponse({
+    success: false,
+    error: 'Task management is not available in Cloudflare Workers deployment'
+  });
 }
 
 function jsonResponse(data, status = 200) {

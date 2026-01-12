@@ -1,8 +1,20 @@
 /**
  * API Configuration
- * Set API_BASE_URL to your Workers backend URL for Cloudflare deployment
+ * Get API_BASE_URL dynamically to handle late initialization
  */
-const API_BASE_URL = window.API_BASE_URL || '';  // Empty string means same origin
+function getApiBaseUrl() {
+  return window.API_BASE_URL || '';  // Empty string means same origin
+}
+
+/**
+ * Ensure URL has leading slash
+ */
+function normalizeUrl(url) {
+  if (!url.startsWith('/')) {
+    return '/' + url;
+  }
+  return url;
+}
 
 /**
  * Call a JSON-in JSON-out API endpoint
@@ -12,12 +24,13 @@ const API_BASE_URL = window.API_BASE_URL || '';  // Empty string means same orig
  * @returns {Promise<any>} The JSON response from the API
  */
 export async function callJsonApi(endpoint, data) {
-  const response = await fetchApi(endpoint, {
+  const apiBaseUrl = getApiBaseUrl();
+  const response = await fetchApi(normalizeUrl(endpoint), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    credentials: API_BASE_URL ? "omit" : "same-origin",
+    credentials: apiBaseUrl ? "omit" : "same-origin",
     body: JSON.stringify(data),
   });
 
@@ -38,6 +51,8 @@ export async function callJsonApi(endpoint, data) {
  */
 export async function fetchApi(url, request) {
   async function _wrap(retry) {
+    const apiBaseUrl = getApiBaseUrl();
+    
     // get the CSRF token
     const token = await getCsrfToken();
 
@@ -50,8 +65,9 @@ export async function fetchApi(url, request) {
     // add the CSRF token to the headers
     finalRequest.headers["X-CSRF-Token"] = token;
 
-    // Build full URL with base
-    const fullUrl = API_BASE_URL ? `${API_BASE_URL}${url}` : url;
+    // Build full URL with base - ensure proper URL construction
+    const normalizedUrl = normalizeUrl(url);
+    const fullUrl = apiBaseUrl ? `${apiBaseUrl}${normalizedUrl}` : normalizedUrl;
 
     // perform the fetch with the updated request
     const response = await fetch(fullUrl, finalRequest);
@@ -89,9 +105,10 @@ let csrfToken = null;
 async function getCsrfToken() {
   if (csrfToken) return csrfToken;
   
-  const csrfUrl = API_BASE_URL ? `${API_BASE_URL}/csrf_token` : "/csrf_token";
+  const apiBaseUrl = getApiBaseUrl();
+  const csrfUrl = apiBaseUrl ? `${apiBaseUrl}/csrf_token` : "/csrf_token";
   const response = await fetch(csrfUrl, {
-    credentials: API_BASE_URL ? "omit" : "same-origin",
+    credentials: apiBaseUrl ? "omit" : "same-origin",
   });
   
   if (response.redirected && response.url.endsWith("/login")) {

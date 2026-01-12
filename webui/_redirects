@@ -1,0 +1,2 @@
+# Disable automatic HTML extension stripping for component files
+/components/* /components/:splat 200
