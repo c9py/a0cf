@@ -1,0 +1,11 @@
+name = "a0cf-api"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+
+# Enable Python support
+# [build]
+# command = "pip install -r requirements.txt"
