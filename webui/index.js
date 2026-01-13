@@ -584,21 +584,60 @@ globalThis.updateAfterScroll = updateAfterScroll;
 // setInterval(poll, 250);
 
 async function startPolling() {
-  const shortInterval = 500;  // Increased from 25ms to 500ms to reduce API load
-  const longInterval = 2000; // Increased from 250ms to 2000ms to reduce API load
-  const shortIntervalPeriod = 20;  // Reduced from 100 to 20 to limit burst polling duration
+  // Polling configuration with exponential backoff
+  const minInterval = 500;     // Minimum polling interval (active state)
+  const maxInterval = 10000;   // Maximum polling interval (idle state)
+  const baseInterval = 2000;   // Base interval for normal operation
+  const backoffMultiplier = 1.5; // Exponential backoff multiplier
+  const shortIntervalPeriod = 20;  // Number of short interval polls after activity
+  
   let shortIntervalCount = 0;
+  let currentInterval = baseInterval;
+  let consecutiveIdlePolls = 0;
+  let consecutiveErrors = 0;
+  const maxConsecutiveErrors = 5;
 
   async function _doPoll() {
-    let nextInterval = longInterval;
+    let nextInterval = currentInterval;
 
     try {
       const result = await poll();
-      if (result) shortIntervalCount = shortIntervalPeriod; // Reset the counter when the result is true
-      if (shortIntervalCount > 0) shortIntervalCount--; // Decrease the counter on each call
-      nextInterval = shortIntervalCount > 0 ? shortInterval : longInterval;
+      consecutiveErrors = 0; // Reset error counter on success
+      
+      if (result) {
+        // Activity detected - use short interval and reset backoff
+        shortIntervalCount = shortIntervalPeriod;
+        consecutiveIdlePolls = 0;
+        currentInterval = minInterval;
+      } else {
+        // No activity - implement exponential backoff
+        consecutiveIdlePolls++;
+        if (consecutiveIdlePolls > 5) {
+          // Apply exponential backoff after 5 idle polls
+          currentInterval = Math.min(
+            currentInterval * backoffMultiplier,
+            maxInterval
+          );
+        }
+      }
+      
+      if (shortIntervalCount > 0) {
+        shortIntervalCount--;
+        nextInterval = minInterval;
+      } else {
+        nextInterval = currentInterval;
+      }
     } catch (error) {
-      console.error("Error:", error);
+      console.error("Polling error:", error);
+      consecutiveErrors++;
+      
+      // Exponential backoff on errors to prevent hammering a failing endpoint
+      if (consecutiveErrors >= maxConsecutiveErrors) {
+        nextInterval = maxInterval;
+        console.warn(`Polling: ${consecutiveErrors} consecutive errors, backing off to ${maxInterval}ms`);
+      } else {
+        nextInterval = Math.min(currentInterval * Math.pow(backoffMultiplier, consecutiveErrors), maxInterval);
+      }
     }
 
     // Call the function again after the selected interval

@@ -85,6 +85,106 @@ const routes = {
   '/task_kill': handleTaskKill,
 };
 
+// Rate limiting configuration
+const RATE_LIMIT_CONFIG = {
+  // Default limits per IP
+  default: {
+    windowMs: 60000,      // 1 minute window
+    maxRequests: 120,     // 120 requests per minute
+  },
+  // Stricter limits for expensive endpoints
+  expensive: {
+    windowMs: 60000,
+    maxRequests: 30,      // 30 requests per minute for AI endpoints
+  },
+  // Relaxed limits for polling
+  polling: {
+    windowMs: 60000,
+    maxRequests: 300,     // 300 polls per minute (5 per second max)
+  },
+};
+
+// Expensive endpoints that need stricter rate limiting
+const EXPENSIVE_ENDPOINTS = ['/message_async', '/synthesize', '/transcribe'];
+const POLLING_ENDPOINTS = ['/poll', '/health', '/api/health'];
+
+// Rate limiter class using in-memory storage (consider KV for production)
+class RateLimiter {
+  constructor() {
+    this.requests = new Map();
+    this.cleanupInterval = 60000; // Clean up every minute
+    this.lastCleanup = Date.now();
+  }
+
+  getClientIP(request) {
+    return request.headers.get('CF-Connecting-IP') ||
+           request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
+           'unknown';
+  }
+
+  getConfig(path) {
+    if (EXPENSIVE_ENDPOINTS.some(ep => path.startsWith(ep))) {
+      return RATE_LIMIT_CONFIG.expensive;
+    }
+    if (POLLING_ENDPOINTS.some(ep => path.startsWith(ep))) {
+      return RATE_LIMIT_CONFIG.polling;
+    }
+    return RATE_LIMIT_CONFIG.default;
+  }
+
+  cleanup() {
+    const now = Date.now();
+    if (now - this.lastCleanup < this.cleanupInterval) return;
+    
+    for (const [key, data] of this.requests.entries()) {
+      if (now - data.windowStart > data.windowMs * 2) {
+        this.requests.delete(key);
+      }
+    }
+    this.lastCleanup = now;
+  }
+
+  isRateLimited(request, path) {
+    this.cleanup();
+    
+    const clientIP = this.getClientIP(request);
+    const config = this.getConfig(path);
+    const key = `${clientIP}:${path}`;
+    const now = Date.now();
+
+    let data = this.requests.get(key);
+    
+    if (!data || (now - data.windowStart) > config.windowMs) {
+      // Start new window
+      data = {
+        windowStart: now,
+        windowMs: config.windowMs,
+        count: 1,
+        maxRequests: config.maxRequests,
+      };
+      this.requests.set(key, data);
+      return { limited: false, remaining: config.maxRequests - 1 };
+    }
+
+    data.count++;
+    
+    if (data.count > config.maxRequests) {
+      const retryAfter = Math.ceil((data.windowStart + config.windowMs - now) / 1000);
+      return { 
+        limited: true, 
+        remaining: 0,
+        retryAfter,
+        message: `Rate limit exceeded. Try again in ${retryAfter} seconds.`
+      };
+    }
+
+    return { limited: false, remaining: config.maxRequests - data.count };
+  }
+}
+
+// Global rate limiter instance
+const rateLimiter = new RateLimiter();
+
 // State class to manage in-memory data
 class WorkerState {
   constructor() {
@@ -122,11 +222,37 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
+    // Apply rate limiting
+    const rateLimitResult = rateLimiter.isRateLimited(request, path);
+    if (rateLimitResult.limited) {
+      return new Response(JSON.stringify({
+        error: 'Too Many Requests',
+        message: rateLimitResult.message,
+        retryAfter: rateLimitResult.retryAfter
+      }), {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': String(rateLimitResult.retryAfter),
+          'X-RateLimit-Remaining': '0',
+          ...corsHeaders
+        }
+      });
+    }
+
     try {
       // Route handling
       const handler = getHandler(path);
       if (handler) {
-        return await handler(request, env, ctx);
+        const response = await handler(request, env, ctx);
+        // Add rate limit headers to successful responses
+        const newHeaders = new Headers(response.headers);
+        newHeaders.set('X-RateLimit-Remaining', String(rateLimitResult.remaining));
+        return new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: newHeaders
+        });
       }
 
       // Default: return API info
