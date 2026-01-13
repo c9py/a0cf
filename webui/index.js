@@ -584,9 +584,9 @@ globalThis.updateAfterScroll = updateAfterScroll;
 // setInterval(poll, 250);
 
 async function startPolling() {
-  const shortInterval = 25;
-  const longInterval = 250;
-  const shortIntervalPeriod = 100;
+  const shortInterval = 500;  // Increased from 25ms to 500ms to reduce API load
+  const longInterval = 2000; // Increased from 250ms to 2000ms to reduce API load
+  const shortIntervalPeriod = 20;  // Reduced from 100 to 20 to limit burst polling duration
   let shortIntervalCount = 0;
 
   async function _doPoll() {
