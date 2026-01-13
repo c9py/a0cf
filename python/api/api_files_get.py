@@ -6,6 +6,38 @@ from python.helpers.print_style import PrintStyle
 import json
 
 
+# Sensitive file patterns that should never be accessed via API
+BLOCKED_PATTERNS = [
+    '.env', 'secrets.env', '.git', '.ssh', 'id_rsa', 'id_ed25519',
+    'credentials', 'password', '.pem', '.key', 'shadow', 'passwd'
+]
+
+
+def is_path_safe(path: str, base_dir: str) -> bool:
+    """
+    Validate that a path is safe to access.
+    Returns True if path is within base_dir and not a sensitive file.
+    """
+    try:
+        # Resolve the real path (handles symlinks and ..)
+        real_path = os.path.realpath(path)
+        real_base = os.path.realpath(base_dir)
+
+        # Check if resolved path is within the base directory
+        if not real_path.startswith(real_base + os.sep) and real_path != real_base:
+            return False
+
+        # Check for sensitive file patterns
+        path_lower = real_path.lower()
+        for pattern in BLOCKED_PATTERNS:
+            if pattern in path_lower:
+                return False
+
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 class ApiFilesGet(ApiHandler):
     @classmethod
     def requires_auth(cls) -> bool:
@@ -43,28 +75,40 @@ class ApiFilesGet(ApiHandler):
                 )
 
             result = {}
+            base_dir = files.get_base_dir()
 
             for path in paths:
                 try:
                     # Convert internal paths to external paths
                     if path.startswith("/a0/tmp/uploads/"):
                         # Internal path - convert to external
-                        filename = path.replace("/a0/tmp/uploads/", "")
+                        filename = os.path.basename(path.replace("/a0/tmp/uploads/", ""))
                         external_path = files.get_abs_path("tmp/uploads", filename)
-                        filename = os.path.basename(external_path)
                     elif path.startswith("/a0/"):
                         # Other internal Agent Zero paths
                         relative_path = path.replace("/a0/", "")
                         external_path = files.get_abs_path(relative_path)
-                        filename = os.path.basename(external_path)
                     else:
-                        # Assume it's already an external/absolute path
-                        external_path = path
-                        filename = os.path.basename(path)
+                        # Only allow paths within the base directory for security
+                        external_path = os.path.normpath(path)
+                        if not os.path.isabs(external_path):
+                            external_path = files.get_abs_path(external_path)
+
+                    filename = os.path.basename(external_path)
+
+                    # Security: Validate path is within allowed directory
+                    if not is_path_safe(external_path, base_dir):
+                        PrintStyle.warning(f"Access denied - path outside allowed directory or blocked: {path}")
+                        continue
 
                     # Check if file exists
                     if not os.path.exists(external_path):
                         PrintStyle.warning(f"File not found: {path}")
+                        continue
+
+                    # Don't allow reading directories
+                    if os.path.isdir(external_path):
+                        PrintStyle.warning(f"Cannot read directory: {path}")
                         continue
 
                     # Read and encode file

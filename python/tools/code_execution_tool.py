@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+import os
 import shlex
 import time
 from python.helpers.tool import Tool, Response
@@ -476,6 +477,19 @@ class CodeExecution(Tool):
         if not project_name:
             return None
         project_path = projects.get_project_folder(project_name)
+
+        # Security: Validate the project path is within the base directory
+        base_dir = files.get_base_dir()
+        real_project_path = os.path.realpath(project_path) if project_path else None
+        real_base_dir = os.path.realpath(base_dir)
+
+        if real_project_path and not (
+            real_project_path.startswith(real_base_dir + os.sep) or
+            real_project_path == real_base_dir
+        ):
+            # Path is outside base directory, don't allow
+            return None
+
         normalized = files.normalize_a0_path(project_path)
         return normalized
         

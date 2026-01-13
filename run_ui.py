@@ -150,15 +150,16 @@ def csrf_protect(f):
 async def login_handler():
     error = None
     if request.method == 'POST':
-        user = dotenv.get_dotenv_value("AUTH_LOGIN")
-        password = dotenv.get_dotenv_value("AUTH_PASSWORD")
-        
-        if request.form['username'] == user and request.form['password'] == password:
+        submitted_user = request.form.get('username', '')
+        submitted_password = request.form.get('password', '')
+
+        # Use secure constant-time comparison to prevent timing attacks
+        if login.verify_credentials(submitted_user, submitted_password):
             session['authentication'] = login.get_credentials_hash()
             return redirect(url_for('serve_index'))
         else:
             error = 'Invalid Credentials. Please try again.'
-            
+
     login_page_content = files.read_file("webui/login.html")
     return render_template_string(login_page_content, error=error)
 

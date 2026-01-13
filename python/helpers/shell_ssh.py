@@ -1,11 +1,39 @@
 import asyncio
+import os
 import paramiko
+import shlex
 import time
 import re
 from typing import Tuple
 from python.helpers.log import Log
 from python.helpers.print_style import PrintStyle
+from python.helpers import files
 # from python.helpers.strings import calculate_valid_match_lengths
+
+
+class WarningHostKeyPolicy(paramiko.MissingHostKeyPolicy):
+    """
+    A host key policy that accepts new keys but logs a warning.
+    In production, consider using RejectPolicy or maintaining a known_hosts file.
+    """
+    def __init__(self, known_hosts_file: str | None = None):
+        self.known_hosts_file = known_hosts_file
+
+    def missing_host_key(self, client, hostname, key):
+        key_type = key.get_name()
+        fingerprint = key.get_fingerprint().hex()
+        PrintStyle.warning(
+            f"SSH: Unknown host key for {hostname} ({key_type}: {fingerprint}). "
+            "Consider adding to known_hosts for better security."
+        )
+        # Optionally save to known_hosts file for future connections
+        if self.known_hosts_file:
+            try:
+                os.makedirs(os.path.dirname(self.known_hosts_file), exist_ok=True)
+                client.get_host_keys().add(hostname, key_type, key)
+                client.save_host_keys(self.known_hosts_file)
+            except Exception as e:
+                PrintStyle.warning(f"Could not save host key: {e}")
 
 
 class SSHInteractiveSession:
@@ -22,7 +50,16 @@ class SSHInteractiveSession:
         self.username = username
         self.password = password
         self.client = paramiko.SSHClient()
-        self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        # Use a known_hosts file for better security than auto-accepting all keys
+        known_hosts_path = files.get_abs_path("tmp", "ssh_known_hosts")
+        if os.path.exists(known_hosts_path):
+            try:
+                self.client.load_host_keys(known_hosts_path)
+            except Exception:
+                pass  # Continue even if loading fails
+        self.client.set_missing_host_key_policy(WarningHostKeyPolicy(known_hosts_path))
+
         self.shell = None
         self.full_output = b""
         self.last_command = b""
@@ -65,7 +102,9 @@ class SSHInteractiveSession:
                 # disable systemd/OSC prompt metadata and disable local echo
                 initial_command = "unset PROMPT_COMMAND PS0; stty -echo"
                 if self.cwd:
-                    initial_command = f"cd {self.cwd}; {initial_command}"
+                    # Security: Properly escape the cwd to prevent command injection
+                    safe_cwd = shlex.quote(self.cwd)
+                    initial_command = f"cd {safe_cwd}; {initial_command}"
                 self.shell.send(f"{initial_command}\n".encode())
 
                 # wait for initial prompt/output to settle
