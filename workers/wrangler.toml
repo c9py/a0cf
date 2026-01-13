@@ -6,6 +6,38 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ENVIRONMENT = "production"
 
-# Enable Python support
-# [build]
-# command = "pip install -r requirements.txt"
+# KV Namespaces for caching and session management
+[[kv_namespaces]]
+binding = "RATE_LIMITS"
+id = "78cb6a87537d4764a4c0442ddb83eaa1"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "55b8f0204dd646d7b6faa6c59cf0e064"
+
+[[kv_namespaces]]
+binding = "MEMORY_CACHE"
+id = "6f6c4826d9874a85aaa07924f9688b57"
+
+# D1 Database for persistent storage
+[[d1_databases]]
+binding = "DB"
+database_name = "a0cf-db"
+database_id = "11a4f74a-9563-4570-baa0-ed1631ca164c"
+
+# R2 Bucket for file storage
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "a0cf-storage"
+
+# AI binding for Workers AI
+[ai]
+binding = "AI"
+
+# Observability
+[observability]
+enabled = true
+
+# Smart Placement for optimal performance
+[placement]
+mode = "smart"

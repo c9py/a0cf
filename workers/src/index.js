@@ -108,11 +108,12 @@ const RATE_LIMIT_CONFIG = {
 const EXPENSIVE_ENDPOINTS = ['/message_async', '/synthesize', '/transcribe'];
 const POLLING_ENDPOINTS = ['/poll', '/health', '/api/health'];
 
-// Rate limiter class using in-memory storage (consider KV for production)
+// Rate limiter class with KV storage for distributed rate limiting across Workers
 class RateLimiter {
   constructor() {
+    // In-memory fallback for when KV is not available
     this.requests = new Map();
-    this.cleanupInterval = 60000; // Clean up every minute
+    this.cleanupInterval = 60000;
     this.lastCleanup = Date.now();
   }
 
@@ -132,30 +133,69 @@ class RateLimiter {
     return RATE_LIMIT_CONFIG.default;
   }
 
-  cleanup() {
+  // KV-based rate limiting for distributed Workers
+  async isRateLimitedKV(request, path, kvNamespace) {
+    const clientIP = this.getClientIP(request);
+    const config = this.getConfig(path);
+    const key = `rate:${clientIP}:${path.replace(/\//g, '_')}`;
     const now = Date.now();
-    if (now - this.lastCleanup < this.cleanupInterval) return;
-    
-    for (const [key, data] of this.requests.entries()) {
-      if (now - data.windowStart > data.windowMs * 2) {
-        this.requests.delete(key);
+
+    try {
+      const stored = await kvNamespace.get(key, { type: 'json' });
+      
+      if (!stored || (now - stored.windowStart) > config.windowMs) {
+        // Start new window
+        const data = {
+          windowStart: now,
+          count: 1,
+        };
+        // TTL = window duration in seconds + buffer
+        const ttl = Math.ceil(config.windowMs / 1000) + 60;
+        await kvNamespace.put(key, JSON.stringify(data), { expirationTtl: ttl });
+        return { limited: false, remaining: config.maxRequests - 1 };
       }
+
+      stored.count++;
+      
+      if (stored.count > config.maxRequests) {
+        const retryAfter = Math.ceil((stored.windowStart + config.windowMs - now) / 1000);
+        return { 
+          limited: true, 
+          remaining: 0,
+          retryAfter,
+          message: `Rate limit exceeded. Try again in ${retryAfter} seconds.`
+        };
+      }
+
+      // Update count in KV
+      const ttl = Math.ceil((stored.windowStart + config.windowMs - now) / 1000) + 60;
+      await kvNamespace.put(key, JSON.stringify(stored), { expirationTtl: ttl });
+      return { limited: false, remaining: config.maxRequests - stored.count };
+    } catch (error) {
+      console.error('KV rate limit error, falling back to in-memory:', error);
+      return this.isRateLimitedMemory(request, path);
     }
-    this.lastCleanup = now;
   }
 
-  isRateLimited(request, path) {
-    this.cleanup();
+  // In-memory fallback rate limiting
+  isRateLimitedMemory(request, path) {
+    const now = Date.now();
+    if (now - this.lastCleanup > this.cleanupInterval) {
+      for (const [key, data] of this.requests.entries()) {
+        if (now - data.windowStart > data.windowMs * 2) {
+          this.requests.delete(key);
+        }
+      }
+      this.lastCleanup = now;
+    }
     
     const clientIP = this.getClientIP(request);
     const config = this.getConfig(path);
     const key = `${clientIP}:${path}`;
-    const now = Date.now();
 
     let data = this.requests.get(key);
     
     if (!data || (now - data.windowStart) > config.windowMs) {
-      // Start new window
       data = {
         windowStart: now,
         windowMs: config.windowMs,
@@ -179,6 +219,14 @@ class RateLimiter {
     }
 
     return { limited: false, remaining: config.maxRequests - data.count };
+  }
+
+  // Main entry point - uses KV if available, falls back to memory
+  async isRateLimited(request, path, kvNamespace = null) {
+    if (kvNamespace) {
+      return this.isRateLimitedKV(request, path, kvNamespace);
+    }
+    return this.isRateLimitedMemory(request, path);
   }
 }
 
@@ -222,8 +270,9 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // Apply rate limiting
-    const rateLimitResult = rateLimiter.isRateLimited(request, path);
+    // Apply rate limiting (use KV if available for distributed limiting)
+    const rateLimitKV = env.RATE_LIMITS || null;
+    const rateLimitResult = await rateLimiter.isRateLimited(request, path, rateLimitKV);
     if (rateLimitResult.limited) {
       return new Response(JSON.stringify({
         error: 'Too Many Requests',
@@ -245,9 +294,11 @@ export default {
       const handler = getHandler(path);
       if (handler) {
         const response = await handler(request, env, ctx);
-        // Add rate limit headers to successful responses
+        // Add rate limit headers and performance headers to successful responses
         const newHeaders = new Headers(response.headers);
         newHeaders.set('X-RateLimit-Remaining', String(rateLimitResult.remaining));
+        newHeaders.set('X-Powered-By', 'Agent-Zero-AGI');
+        newHeaders.set('Cache-Control', getCacheControl(path));
         return new Response(response.body, {
           status: response.status,
           statusText: response.statusText,
@@ -260,7 +311,13 @@ export default {
         service: 'Agent Zero API',
         version: '1.0.0',
         status: 'running',
-        endpoints: Object.keys(routes)
+        endpoints: Object.keys(routes),
+        bindings: {
+          kv: !!env.RATE_LIMITS,
+          d1: !!env.DB,
+          r2: !!env.STORAGE,
+          ai: !!env.AI
+        }
       });
 
     } catch (error) {
@@ -283,6 +340,28 @@ function getHandler(path) {
   }
   
   return null;
+}
+
+// Intelligent cache control based on endpoint type
+function getCacheControl(path) {
+  // Static/health endpoints - cache for 1 minute
+  if (path === '/health' || path === '/api/health' || path === '/api/version') {
+    return 'public, max-age=60, s-maxage=60';
+  }
+  // Settings - cache for 5 minutes, revalidate
+  if (path === '/settings_get') {
+    return 'private, max-age=300, stale-while-revalidate=60';
+  }
+  // Polling - no cache
+  if (path === '/poll') {
+    return 'no-store, no-cache, must-revalidate';
+  }
+  // Chat operations - no cache
+  if (path.startsWith('/chat_') || path === '/message_async') {
+    return 'no-store, no-cache, must-revalidate';
+  }
+  // Default - short cache with revalidation
+  return 'private, max-age=30, stale-while-revalidate=10';
 }
 
 // ============ Handler Functions ============
